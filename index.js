@@ -93,8 +93,9 @@ async function run() {
                 ],
                 mode: 'payment',
                 // Redirect URLs - Make sure port matches your client (5173 usually)
-                success_url: `http://localhost:5173/dashboard/payment/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order._id}`,
-                cancel_url: `http://localhost:5173/dashboard/payment/cancelled`,
+                success_url: `${process.env.SITE_DOMAIN}/dashboard/payment/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order._id}`,
+                cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment/cancelled`,
+                customer_email: order.email,
             });
 
             res.send({ url: session.url });
@@ -116,6 +117,7 @@ async function run() {
 
                 const payment = {
                     orderId: orderId,
+                    email: session.customer_details.email,
                     transactionId: transactionId,
                     amount: session.amount_total / 100,
                     currency: session.currency,
@@ -139,6 +141,22 @@ async function run() {
             } else {
                 res.status(400).send({ message: "Payment not verified" });
             }
+        });
+
+        // GET Payments by Email
+        app.get('/payments', async (req, res) => {
+            const email = req.query.email;
+            if (!email) {
+                return res.send([]);
+            }
+            const query = { email: email };
+        });
+
+        // GET Payments History
+        app.get('/payments/:email', async (req, res) => {
+            const query = { email: req.params.email };
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result);
         });
 
         // Send a ping to confirm a successful connection
