@@ -4,15 +4,34 @@ const app = express();
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const admin = require("firebase-admin");
+const serviceAccount = require("./haystack-firebase-adminsdk.json");
 const port = process.env.PORT || 3000
 
-// middleware
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
 app.use(express.json());
 app.use(cors());
 
+// Middleware to verify token
+const verifyToken = async (req, res, next) => {
+    if (!req.headers.authorization) {
+        return res.status(401).send({ message: 'unauthorized access' });
+    }
+    const token = req.headers.authorization.split(' ')[1];
+    try {
+        const decodedUser = await admin.auth().verifyIdToken(token);
+        req.decodedEmail = decodedUser.email;
+        next();
+    } catch (error) {
+        return res.status(401).send({ message: 'unauthorized access' });
+    }
+}
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@assignment-10-hay-stack.do8wqx0.mongodb.net/?appName=assignment-10-hay-stack-database`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -23,30 +42,25 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
 
         const db = client.db('haystackDB');
         const orderCollection = db.collection('orders');
         const paymentCollection = db.collection('payments');
 
-        // api
-        app.post('/orders', async (req, res) => {
+        // PROTECTED: Post Order
+        app.post('/orders', verifyToken, async (req, res) => {
             const order = req.body;
             const result = await orderCollection.insertOne(order);
             res.send(result);
         });
 
-        // POST Order
-        app.post('/orders', async (req, res) => {
-            const order = req.body;
-            const result = await orderCollection.insertOne(order);
-            res.send(result);
-        });
-
-        // GET Orders (Filtered by email)
-        app.get('/orders', async (req, res) => {
+        // PROTECTED: Get Orders by Email
+        app.get('/orders', verifyToken, async (req, res) => {
             const email = req.query.email;
+            if (req.decodedEmail !== email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
             let query = {};
             if (email) {
                 query = { email: email };
@@ -55,27 +69,27 @@ async function run() {
             res.send(result);
         });
 
-        // DELETE Order
-        app.delete('/orders/:id', async (req, res) => {
+        // PROTECTED: Delete Order
+        app.delete('/orders/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await orderCollection.deleteOne(query);
             res.send(result);
         });
 
-        // GET Single Order
-        app.get('/orders/:id', async (req, res) => {
+        // PROTECTED: Get Single Order (Used for Payment)
+        app.get('/orders/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await orderCollection.findOne(query);
             res.send(result);
         });
 
-        // 1. Create Stripe Checkout Session
-        app.post('/create-checkout-session', async (req, res) => {
+        // PROTECTED: Create Checkout Session
+        app.post('/create-checkout-session', verifyToken, async (req, res) => {
             const { order } = req.body;
             const price = order.totalPrice;
-            const amount = Math.round(price * 100); // Stripe uses cents
+            const amount = Math.round(price * 100);
 
             const session = await stripe.checkout.sessions.create({
                 payment_method_types: ['card'],
@@ -88,11 +102,10 @@ async function run() {
                             },
                             unit_amount: amount,
                         },
-                        quantity: 1, // Quantity is 1 because 'totalPrice' calculates the full cost
+                        quantity: 1,
                     },
                 ],
                 mode: 'payment',
-                // Redirect URLs - Make sure port matches your client (5173 usually)
                 success_url: `${process.env.SITE_DOMAIN}/dashboard/payment/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order._id}`,
                 cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment/cancelled`,
                 customer_email: order.email,
@@ -101,8 +114,8 @@ async function run() {
             res.send({ url: session.url });
         });
 
-        // 2. Verify & Save Payment
-        app.post('/payments/success', async (req, res) => {
+        // PROTECTED: Payment Success (Db Update)
+        app.post('/payments/success', verifyToken, async (req, res) => {
             const { sessionId, orderId } = req.body;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
@@ -146,28 +159,32 @@ async function run() {
             }
         });
 
-        // GET Payments by Email
-        app.get('/payments', async (req, res) => {
+        app.get('/payments', verifyToken, async (req, res) => {
             const email = req.query.email;
+            if (req.decodedEmail !== email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
             if (!email) {
                 return res.send([]);
             }
             const query = { email: email };
-        });
-
-        // GET Payments History
-        app.get('/payments/:email', async (req, res) => {
-            const query = { email: req.params.email };
             const result = await paymentCollection.find(query).toArray();
             res.send(result);
         });
 
-        // Send a ping to confirm a successful connection
+        app.get('/payments/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (req.decodedEmail !== email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            const query = { email: email };
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result);
+        });
+
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
     }
 }
 run().catch(console.dir);
