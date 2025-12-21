@@ -100,15 +100,23 @@ async function run() {
             res.send({ url: session.url });
         });
 
-        // 2. Verify & Save Payment (Called from Client Success Page)
+        // 2. Verify & Save Payment
         app.post('/payments/success', async (req, res) => {
             const { sessionId, orderId } = req.body;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
             if (session.payment_status === 'paid') {
+                const transactionId = session.payment_intent;
+
+                // Checking for duplicate payment
+                const existingPayment = await paymentCollection.findOne({ transactionId: transactionId });
+                if (existingPayment) {
+                    return res.send({ message: "Payment already processed", paymentResult: { insertedId: null } });
+                }
+
                 const payment = {
                     orderId: orderId,
-                    transactionId: session.payment_intent,
+                    transactionId: transactionId,
                     amount: session.amount_total / 100,
                     currency: session.currency,
                     date: new Date(),
@@ -122,7 +130,7 @@ async function run() {
                 const updateDoc = {
                     $set: {
                         paymentStatus: 'Paid',
-                        transactionId: session.payment_intent
+                        transactionId: transactionId
                     }
                 };
                 const updateResult = await orderCollection.updateOne(query, updateDoc);
