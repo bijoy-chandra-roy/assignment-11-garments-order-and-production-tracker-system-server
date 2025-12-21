@@ -211,6 +211,13 @@ async function run() {
             res.send(result);
         });
 
+        app.get('/products/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await productCollection.findOne(query);
+            res.send(result);
+        });
+
         app.post('/create-checkout-session', verifyToken, async (req, res) => {
             const { order } = req.body;
             const price = order.totalPrice;
