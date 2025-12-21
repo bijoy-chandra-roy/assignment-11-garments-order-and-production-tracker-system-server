@@ -15,7 +15,6 @@ admin.initializeApp({
 app.use(express.json());
 app.use(cors());
 
-// Middleware to verify token
 const verifyToken = async (req, res, next) => {
     if (!req.headers.authorization) {
         return res.status(401).send({ message: 'unauthorized access' });
@@ -47,15 +46,77 @@ async function run() {
         const db = client.db('haystackDB');
         const orderCollection = db.collection('orders');
         const paymentCollection = db.collection('payments');
+        const userCollection = db.collection('users');
+        const productCollection = db.collection('products');
 
-        // PROTECTED: Post Order
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decodedEmail;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+            const isAdmin = user?.role === 'admin';
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        }
+
+        const verifyManager = async (req, res, next) => {
+            const email = req.decodedEmail;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+            const isManager = user?.role === 'manager';
+            if (!isManager) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        }
+
+        app.post('/products', verifyToken, verifyManager, async (req, res) => {
+            const item = req.body;
+            const result = await productCollection.insertOne(item);
+            res.send(result);
+        });
+
+        app.get('/products', async (req, res) => {
+            const result = await productCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.delete('/products/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await productCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.patch('/products/:id', verifyToken, async (req, res) => {
+            const item = req.body;
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: { ...item }
+            }
+            const result = await productCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        app.post('/users', async (req, res) => {
+            const user = req.body;
+            const query = { email: user.email }
+            const existingUser = await userCollection.findOne(query);
+            if (existingUser) {
+                return res.send({ message: 'user already exists', insertedId: null })
+            }
+            const result = await userCollection.insertOne(user);
+            res.send(result);
+        });
+
         app.post('/orders', verifyToken, async (req, res) => {
             const order = req.body;
             const result = await orderCollection.insertOne(order);
             res.send(result);
         });
 
-        // PROTECTED: Get Orders by Email
         app.get('/orders', verifyToken, async (req, res) => {
             const email = req.query.email;
             if (req.decodedEmail !== email) {
@@ -69,7 +130,6 @@ async function run() {
             res.send(result);
         });
 
-        // PROTECTED: Delete Order
         app.delete('/orders/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -77,7 +137,6 @@ async function run() {
             res.send(result);
         });
 
-        // PROTECTED: Get Single Order (Used for Payment)
         app.get('/orders/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -85,7 +144,6 @@ async function run() {
             res.send(result);
         });
 
-        // PROTECTED: Create Checkout Session
         app.post('/create-checkout-session', verifyToken, async (req, res) => {
             const { order } = req.body;
             const price = order.totalPrice;
@@ -114,7 +172,6 @@ async function run() {
             res.send({ url: session.url });
         });
 
-        // PROTECTED: Payment Success (Db Update)
         app.post('/payments/success', verifyToken, async (req, res) => {
             const { sessionId, orderId } = req.body;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
@@ -179,6 +236,40 @@ async function run() {
             }
             const query = { email: email };
             const result = await paymentCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.get('/users', verifyToken, async (req, res) => {
+            const result = await userCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.delete('/users/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await userCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.patch('/users/admin/:id', verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    role: 'admin'
+                }
+            }
+            const result = await userCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        app.get('/users/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (req.decodedEmail !== email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            const query = { email: email };
+            const result = await userCollection.findOne(query);
             res.send(result);
         });
 
