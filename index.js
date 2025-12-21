@@ -100,6 +100,65 @@ async function run() {
             res.send(result);
         });
 
+        // Manager: Get all pending orders
+        app.get('/orders/pending', verifyToken, verifyManager, async (req, res) => {
+            const result = await orderCollection.find({ status: 'Pending' }).toArray();
+            res.send(result);
+        });
+
+        // Manager: Approve or Reject order
+        app.patch('/orders/status/:id', verifyToken, verifyManager, async (req, res) => {
+            const id = req.params.id;
+            const { status } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            
+            let updatedDoc = {
+                $set: {
+                    status: status
+                }
+            };
+
+            // If approving, log the timestamp
+            if(status === 'Approved') {
+                updatedDoc.$set.approvedAt = new Date();
+            }
+
+            const result = await orderCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        // Manager: Get all approved/active orders (Excludes Pending, Rejected, or Cancelled)
+        app.get('/orders/approved', verifyToken, verifyManager, async (req, res) => {
+            const result = await orderCollection.find({ 
+                status: { $nin: ['Pending', 'Rejected', 'Cancelled'] } 
+            }).sort({ approvedAt: -1 }).toArray();
+            res.send(result);
+        });
+
+        // Manager: Add tracking info and update order status
+        app.patch('/orders/tracking/:id', verifyToken, verifyManager, async (req, res) => {
+            const id = req.params.id;
+            const { status, location, note, date } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            
+            const updatedDoc = {
+                $push: {
+                    trackingHistory: {
+                        status,
+                        location,
+                        note,
+                        date,
+                        timestamp: new Date()
+                    }
+                },
+                $set: {
+                    status: status // Updates the main status to the latest tracking stage
+                }
+            }
+            const result = await orderCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         app.post('/users', async (req, res) => {
             const user = req.body;
             const query = { email: user.email }
@@ -119,13 +178,21 @@ async function run() {
 
         app.get('/orders', verifyToken, async (req, res) => {
             const email = req.query.email;
-            if (req.decodedEmail !== email) {
-                return res.status(403).send({ message: 'forbidden access' })
+            const decodedEmail = req.decodedEmail;
+
+            const queryUser = { email: decodedEmail };
+            const user = await userCollection.findOne(queryUser);
+            const isAdmin = user?.role === 'admin';
+
+            if (!isAdmin && email !== decodedEmail) {
+                return res.status(403).send({ message: 'forbidden access' });
             }
+
             let query = {};
             if (email) {
                 query = { email: email };
             }
+            
             const result = await orderCollection.find(query).toArray();
             res.send(result);
         });
