@@ -2,8 +2,9 @@ const express = require('express')
 const cors = require('cors');
 const app = express();
 require('dotenv').config();
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 3000
-const { MongoClient, ServerApiVersion } = require('mongodb');
 
 // middleware
 app.use(express.json());
@@ -27,6 +28,7 @@ async function run() {
 
         const db = client.db('haystackDB');
         const orderCollection = db.collection('orders');
+        const paymentCollection = db.collection('payments');
 
         // api
         app.post('/orders', async (req, res) => {
@@ -51,6 +53,84 @@ async function run() {
             }
             const result = await orderCollection.find(query).toArray();
             res.send(result);
+        });
+
+        // DELETE Order
+        app.delete('/orders/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await orderCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        // GET Single Order
+        app.get('/orders/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await orderCollection.findOne(query);
+            res.send(result);
+        });
+
+        // 1. Create Stripe Checkout Session
+        app.post('/create-checkout-session', async (req, res) => {
+            const { order } = req.body;
+            const price = order.totalPrice;
+            const amount = Math.round(price * 100); // Stripe uses cents
+
+            const session = await stripe.checkout.sessions.create({
+                payment_method_types: ['card'],
+                line_items: [
+                    {
+                        price_data: {
+                            currency: 'usd',
+                            product_data: {
+                                name: order.productName || 'Garment Order',
+                            },
+                            unit_amount: amount,
+                        },
+                        quantity: 1, // Quantity is 1 because 'totalPrice' calculates the full cost
+                    },
+                ],
+                mode: 'payment',
+                // Redirect URLs - Make sure port matches your client (5173 usually)
+                success_url: `http://localhost:5173/dashboard/payment/success?session_id={CHECKOUT_SESSION_ID}&orderId=${order._id}`,
+                cancel_url: `http://localhost:5173/dashboard/payment/cancelled`,
+            });
+
+            res.send({ url: session.url });
+        });
+
+        // 2. Verify & Save Payment (Called from Client Success Page)
+        app.post('/payments/success', async (req, res) => {
+            const { sessionId, orderId } = req.body;
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+            if (session.payment_status === 'paid') {
+                const payment = {
+                    orderId: orderId,
+                    transactionId: session.payment_intent,
+                    amount: session.amount_total / 100,
+                    currency: session.currency,
+                    date: new Date(),
+                    status: 'Paid'
+                };
+
+                const paymentResult = await paymentCollection.insertOne(payment);
+
+                // Update Order Status
+                const query = { _id: new ObjectId(orderId) };
+                const updateDoc = {
+                    $set: {
+                        paymentStatus: 'Paid',
+                        transactionId: session.payment_intent
+                    }
+                };
+                const updateResult = await orderCollection.updateOne(query, updateDoc);
+
+                res.send({ paymentResult, updateResult });
+            } else {
+                res.status(400).send({ message: "Payment not verified" });
+            }
         });
 
         // Send a ping to confirm a successful connection
