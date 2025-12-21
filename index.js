@@ -109,11 +109,12 @@ async function run() {
             if (session.payment_status === 'paid') {
                 const transactionId = session.payment_intent;
 
-                // Checking for duplicate payment
                 const existingPayment = await paymentCollection.findOne({ transactionId: transactionId });
                 if (existingPayment) {
                     return res.send({ message: "Payment already processed", paymentResult: { insertedId: null } });
                 }
+
+                const order = await orderCollection.findOne({ _id: new ObjectId(orderId) });
 
                 const payment = {
                     orderId: orderId,
@@ -122,12 +123,14 @@ async function run() {
                     amount: session.amount_total / 100,
                     currency: session.currency,
                     date: new Date(),
-                    status: 'Paid'
+                    status: 'Paid',
+                    productName: order?.productName,
+                    productImage: order?.productImage,
+                    quantity: order?.quantity
                 };
 
                 const paymentResult = await paymentCollection.insertOne(payment);
 
-                // Update Order Status
                 const query = { _id: new ObjectId(orderId) };
                 const updateDoc = {
                     $set: {
