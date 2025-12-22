@@ -1,3 +1,4 @@
 node_modules
 .env
 haystack-firebase-adminsdk.json
+.vercel
