@@ -71,7 +71,6 @@ async function run() {
             next();
         }
 
-        // Product Routes
         app.post('/products', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
             const result = await productCollection.insertOne(item);
@@ -87,8 +86,6 @@ async function run() {
             if (search) {
                 query = {
                     name: { $regex: search, $options: 'i' },
-                    // Optional: Add category search if needed
-                    // category: { $regex: search, $options: 'i' }
                 };
             }
 
@@ -97,7 +94,6 @@ async function run() {
                 .limit(size)
                 .toArray();
 
-            // Get total count for pagination calculation
             const count = await productCollection.countDocuments(query);
 
             res.send({
@@ -106,7 +102,6 @@ async function run() {
             });
         });
 
-        // FIXED: Added verifyManager
         app.delete('/products/:id', verifyToken, verifyManager, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -114,7 +109,6 @@ async function run() {
             res.send(result);
         });
 
-        // FIXED: Added verifyManager
         app.patch('/products/:id', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
             const id = req.params.id;
@@ -126,13 +120,11 @@ async function run() {
             res.send(result);
         });
 
-        // Manager: Get all pending orders
         app.get('/orders/pending', verifyToken, verifyManager, async (req, res) => {
             const result = await orderCollection.find({ status: 'Pending' }).toArray();
             res.send(result);
         });
 
-        // Manager: Approve or Reject order
         app.patch('/orders/status/:id', verifyToken, verifyManager, async (req, res) => {
             const id = req.params.id;
             const { status } = req.body;
@@ -144,7 +136,6 @@ async function run() {
                 }
             };
 
-            // If approving, log the timestamp
             if (status === 'Approved') {
                 updatedDoc.$set.approvedAt = new Date();
             }
@@ -153,7 +144,6 @@ async function run() {
             res.send(result);
         });
 
-        // Manager: Get all approved/active orders (Excludes Pending, Rejected, or Cancelled)
         app.get('/orders/approved', verifyToken, verifyManager, async (req, res) => {
             const result = await orderCollection.find({
                 status: { $nin: ['Pending', 'Rejected', 'Cancelled'] }
@@ -161,7 +151,6 @@ async function run() {
             res.send(result);
         });
 
-        // Manager: Add tracking info and update order status
         app.patch('/orders/tracking/:id', verifyToken, verifyManager, async (req, res) => {
             const id = req.params.id;
             const { status, location, note, date } = req.body;
@@ -178,7 +167,7 @@ async function run() {
                     }
                 },
                 $set: {
-                    status: status // Updates the main status to the latest tracking stage
+                    status: status
                 }
             }
             const result = await orderCollection.updateOne(filter, updatedDoc);
@@ -339,12 +328,10 @@ async function run() {
             res.send(result);
         });
 
-        // FIXED: Added verifyAdmin
         app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
             const search = req.query.search || "";
             let query = {};
 
-            // Filter by name or email if search text exists
             if (search) {
                 query = {
                     $or: [
@@ -358,7 +345,6 @@ async function run() {
             res.send(result);
         });
 
-        // FIXED: Added verifyAdmin
         app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -366,7 +352,6 @@ async function run() {
             res.send(result);
         });
 
-        // FIXED: Added verifyAdmin
         app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
@@ -389,7 +374,6 @@ async function run() {
             res.send(result);
         });
 
-        // Suspend User Endpoint
         app.patch('/users/suspend/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const { status, reason, feedback } = req.body;
@@ -397,9 +381,9 @@ async function run() {
             const filter = { _id: new ObjectId(id) };
             const updatedDoc = {
                 $set: {
-                    status: status, // 'suspended' or 'active'
-                    suspendReason: reason, // For admin records
-                    suspendFeedback: feedback // Visible to the user
+                    status: status,
+                    suspendReason: reason,
+                    suspendFeedback: feedback
                 }
             };
 
@@ -407,7 +391,6 @@ async function run() {
             res.send(result);
         });
 
-        // Reactivate User Endpoint (Optional, for un-suspending)
         app.patch('/users/reactivate/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
@@ -422,14 +405,11 @@ async function run() {
             res.send(result);
         });
 
-        // Admin Statistics Endpoint
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
             const users = await userCollection.estimatedDocumentCount();
             const products = await productCollection.estimatedDocumentCount();
             const orders = await orderCollection.estimatedDocumentCount();
 
-            // Calculate Total Revenue
-            // We use MongoDB Aggregation Pipeline to sum up the 'totalPrice' field of all orders
             const payments = await orderCollection.aggregate([
                 {
                     $group: {
