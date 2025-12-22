@@ -71,6 +71,7 @@ async function run() {
             next();
         }
 
+        // Product Routes
         app.post('/products', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
             const result = await productCollection.insertOne(item);
@@ -82,14 +83,16 @@ async function run() {
             res.send(result);
         });
 
-        app.delete('/products/:id', verifyToken, async (req, res) => {
+        // FIXED: Added verifyManager
+        app.delete('/products/:id', verifyToken, verifyManager, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await productCollection.deleteOne(query);
             res.send(result);
         });
 
-        app.patch('/products/:id', verifyToken, async (req, res) => {
+        // FIXED: Added verifyManager
+        app.patch('/products/:id', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
@@ -313,19 +316,22 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/users', verifyToken, async (req, res) => {
+        // FIXED: Added verifyAdmin
+        app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
             const result = await userCollection.find().toArray();
             res.send(result);
         });
 
-        app.delete('/users/:id', verifyToken, async (req, res) => {
+        // FIXED: Added verifyAdmin
+        app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await userCollection.deleteOne(query);
             res.send(result);
         });
 
-        app.patch('/users/admin/:id', verifyToken, async (req, res) => {
+        // FIXED: Added verifyAdmin
+        app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
             const updatedDoc = {
