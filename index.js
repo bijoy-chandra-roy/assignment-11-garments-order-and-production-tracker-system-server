@@ -79,8 +79,31 @@ async function run() {
         });
 
         app.get('/products', async (req, res) => {
-            const result = await productCollection.find().toArray();
-            res.send(result);
+            const page = parseInt(req.query.page) || 0;
+            const size = parseInt(req.query.size) || 10;
+            const search = req.query.search || "";
+
+            let query = {};
+            if (search) {
+                query = {
+                    name: { $regex: search, $options: 'i' },
+                    // Optional: Add category search if needed
+                    // category: { $regex: search, $options: 'i' }
+                };
+            }
+
+            const result = await productCollection.find(query)
+                .skip(page * size)
+                .limit(size)
+                .toArray();
+
+            // Get total count for pagination calculation
+            const count = await productCollection.countDocuments(query);
+
+            res.send({
+                products: result,
+                count: count
+            });
         });
 
         // FIXED: Added verifyManager
@@ -114,7 +137,7 @@ async function run() {
             const id = req.params.id;
             const { status } = req.body;
             const filter = { _id: new ObjectId(id) };
-            
+
             let updatedDoc = {
                 $set: {
                     status: status
@@ -122,7 +145,7 @@ async function run() {
             };
 
             // If approving, log the timestamp
-            if(status === 'Approved') {
+            if (status === 'Approved') {
                 updatedDoc.$set.approvedAt = new Date();
             }
 
@@ -132,8 +155,8 @@ async function run() {
 
         // Manager: Get all approved/active orders (Excludes Pending, Rejected, or Cancelled)
         app.get('/orders/approved', verifyToken, verifyManager, async (req, res) => {
-            const result = await orderCollection.find({ 
-                status: { $nin: ['Pending', 'Rejected', 'Cancelled'] } 
+            const result = await orderCollection.find({
+                status: { $nin: ['Pending', 'Rejected', 'Cancelled'] }
             }).sort({ approvedAt: -1 }).toArray();
             res.send(result);
         });
@@ -143,7 +166,7 @@ async function run() {
             const id = req.params.id;
             const { status, location, note, date } = req.body;
             const filter = { _id: new ObjectId(id) };
-            
+
             const updatedDoc = {
                 $push: {
                     trackingHistory: {
@@ -195,7 +218,7 @@ async function run() {
             if (email) {
                 query = { email: email };
             }
-            
+
             const result = await orderCollection.find(query).toArray();
             res.send(result);
         });
@@ -318,7 +341,20 @@ async function run() {
 
         // FIXED: Added verifyAdmin
         app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
-            const result = await userCollection.find().toArray();
+            const search = req.query.search || "";
+            let query = {};
+
+            // Filter by name or email if search text exists
+            if (search) {
+                query = {
+                    $or: [
+                        { name: { $regex: search, $options: 'i' } },
+                        { email: { $regex: search, $options: 'i' } }
+                    ]
+                };
+            }
+
+            const result = await userCollection.find(query).toArray();
             res.send(result);
         });
 
