@@ -389,6 +389,39 @@ async function run() {
             res.send(result);
         });
 
+        // Suspend User Endpoint
+        app.patch('/users/suspend/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { status, reason, feedback } = req.body;
+
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    status: status, // 'suspended' or 'active'
+                    suspendReason: reason, // For admin records
+                    suspendFeedback: feedback // Visible to the user
+                }
+            };
+
+            const result = await userCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
+        // Reactivate User Endpoint (Optional, for un-suspending)
+        app.patch('/users/reactivate/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    status: 'active',
+                    suspendReason: null,
+                    suspendFeedback: null
+                }
+            };
+            const result = await userCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         // Admin Statistics Endpoint
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
             const users = await userCollection.estimatedDocumentCount();
