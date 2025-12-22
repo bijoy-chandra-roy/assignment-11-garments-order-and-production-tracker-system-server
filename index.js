@@ -347,6 +347,33 @@ async function run() {
             res.send(result);
         });
 
+        // Admin Statistics Endpoint
+        app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+            const users = await userCollection.estimatedDocumentCount();
+            const products = await productCollection.estimatedDocumentCount();
+            const orders = await orderCollection.estimatedDocumentCount();
+
+            // Calculate Total Revenue
+            // We use MongoDB Aggregation Pipeline to sum up the 'totalPrice' field of all orders
+            const payments = await orderCollection.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalRevenue: { $sum: '$totalPrice' }
+                    }
+                }
+            ]).toArray();
+
+            const revenue = payments.length > 0 ? payments[0].totalRevenue : 0;
+
+            res.send({
+                users,
+                products,
+                orders,
+                revenue
+            });
+        });
+
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
