@@ -168,7 +168,9 @@ async function run() {
                     }
                 },
                 $set: {
-                    status: status
+                    status: status,
+                    location: location,
+                    note: note 
                 }
             }
             const result = await orderCollection.updateOne(filter, updatedDoc);
