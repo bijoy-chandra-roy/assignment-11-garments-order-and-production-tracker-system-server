@@ -82,12 +82,14 @@ async function run() {
             const page = parseInt(req.query.page) || 0;
             const size = parseInt(req.query.size) || 10;
             const search = req.query.search || "";
+            const showOnHome = req.query.showOnHome === 'true';
 
             let query = {};
             if (search) {
-                query = {
-                    name: { $regex: search, $options: 'i' },
-                };
+                query.name = { $regex: search, $options: 'i' };
+            }
+            if (showOnHome) {
+                query.showOnHome = true;
             }
 
             const result = await productCollection.find(query)
@@ -110,13 +112,18 @@ async function run() {
             res.send(result);
         });
 
-        app.patch('/products/:id', verifyToken, verifyManager, async (req, res) => {
+        app.patch('/products/:id', verifyToken, async (req, res) => {
+            const email = req.decodedEmail;
+            const user = await userCollection.findOne({ email });
+
+            if (user?.role !== 'manager' && user?.role !== 'admin') {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+
             const item = req.body;
             const id = req.params.id;
             const filter = { _id: new ObjectId(id) };
-            const updatedDoc = {
-                $set: { ...item }
-            }
+            const updatedDoc = { $set: { ...item } };
             const result = await productCollection.updateOne(filter, updatedDoc);
             res.send(result);
         });
@@ -170,7 +177,7 @@ async function run() {
                 $set: {
                     status: status,
                     location: location,
-                    note: note 
+                    note: note
                 }
             }
             const result = await orderCollection.updateOne(filter, updatedDoc);
@@ -190,7 +197,18 @@ async function run() {
 
         app.post('/orders', verifyToken, async (req, res) => {
             const order = req.body;
+
             const result = await orderCollection.insertOne(order);
+
+            if (result.insertedId) {
+                const productFilter = { _id: new ObjectId(order.productId) };
+                const updateDoc = {
+                    $inc: { quantity: -order.quantity }
+                };
+
+                await productCollection.updateOne(productFilter, updateDoc);
+            }
+
             res.send(result);
         });
 
@@ -218,6 +236,19 @@ async function run() {
         app.delete('/orders/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
+
+            const order = await orderCollection.findOne(query);
+
+            if (!order) {
+                return res.status(404).send({ message: "Order not found" });
+            }
+
+            const productFilter = { _id: new ObjectId(order.productId) };
+            const updateDoc = {
+                $inc: { quantity: order.quantity }
+            };
+            await productCollection.updateOne(productFilter, updateDoc);
+
             const result = await orderCollection.deleteOne(query);
             res.send(result);
         });
