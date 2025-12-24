@@ -65,16 +65,19 @@ async function run() {
             const email = req.decodedEmail;
             const query = { email: email };
             const user = await userCollection.findOne(query);
+
             const isManager = user?.role === 'manager';
-            if (!isManager) {
-                return res.status(403).send({ message: 'forbidden access' });
+            const isActive = user?.status === 'active';
+
+            if (!isManager || !isActive) {
+                return res.status(403).send({ message: 'forbidden access: user not active or not manager' });
             }
             next();
         }
 
         app.post('/products', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
-            
+
             if (item.addedAt) {
                 item.addedAt = new Date(item.addedAt);
             } else {
@@ -123,7 +126,10 @@ async function run() {
             const email = req.decodedEmail;
             const user = await userCollection.findOne({ email });
 
-            if (user?.role !== 'manager' && user?.role !== 'admin') {
+            const isAdmin = user?.role === 'admin';
+            const isActiveManager = user?.role === 'manager' && user?.status === 'active';
+
+            if (!isAdmin && !isActiveManager) {
                 return res.status(403).send({ message: 'forbidden access' });
             }
 
@@ -198,8 +204,12 @@ async function run() {
             if (existingUser) {
                 return res.send({ message: 'user already exists', insertedId: null })
             }
+
+            const status = user.role === 'manager' ? 'pending' : 'active';
+
             const result = await userCollection.insertOne({
                 ...user,
+                status: status,
                 createdAt: new Date()
             });
             res.send(result);
@@ -207,7 +217,7 @@ async function run() {
 
         app.post('/orders', verifyToken, async (req, res) => {
             const order = req.body;
-            
+
             if (order.orderDate) {
                 order.orderDate = new Date(order.orderDate);
             } else {
@@ -455,9 +465,38 @@ async function run() {
             res.send(result);
         });
 
+        app.patch('/users/update/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { role, status } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            
+            const currentUser = await userCollection.findOne(filter);
+
+            if (role === 'admin') {
+                const isManager = currentUser?.role === 'manager';
+                const isActive = currentUser?.status === 'active';
+
+                if (!isManager || !isActive) {
+                    return res.status(400).send({ 
+                        message: 'Action Denied: Only active Managers can be promoted to Admin.' 
+                    });
+                }
+            }
+
+            const updatedDoc = {
+                $set: {}
+            };
+
+            if (role) updatedDoc.$set.role = role;
+            if (status) updatedDoc.$set.status = status;
+
+            const result = await userCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
             const { filter } = req.query;
-            
+
             let dateLogic = {};
             const now = new Date();
             let startDate = null;
@@ -482,25 +521,25 @@ async function run() {
             }
 
             try {
-                
-                const userQuery = startDate ? { 
-                    $expr: { $gte: [{ $toDate: "$createdAt" }, startDate] } 
+
+                const userQuery = startDate ? {
+                    $expr: { $gte: [{ $toDate: "$createdAt" }, startDate] }
                 } : {};
 
-                const productQuery = startDate ? { 
-                    $expr: { $gte: [{ $toDate: "$addedAt" }, startDate] } 
+                const productQuery = startDate ? {
+                    $expr: { $gte: [{ $toDate: "$addedAt" }, startDate] }
                 } : {};
 
-                const orderQuery = startDate ? { 
-                    $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] } 
+                const orderQuery = startDate ? {
+                    $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] }
                 } : {};
 
                 const users = await userCollection.countDocuments(userQuery);
                 const products = await productCollection.countDocuments(productQuery);
                 const orders = await orderCollection.countDocuments(orderQuery);
 
-                const matchStage = startDate 
-                    ? { $match: { $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] } } } 
+                const matchStage = startDate
+                    ? { $match: { $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] } } }
                     : { $match: {} };
 
                 const payments = await orderCollection.aggregate([
