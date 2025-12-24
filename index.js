@@ -67,7 +67,26 @@ async function run() {
             const user = await userCollection.findOne(query);
 
             const isManager = user?.role === 'manager';
+
+            if (!isManager) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        }
+
+        const verifyActiveManager = async (req, res, next) => {
+            const email = req.decodedEmail;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+
+            const isAdmin = user?.role === 'admin';
+            const isManager = user?.role === 'manager';
             const isActive = user?.status === 'active';
+
+            if (isAdmin) {
+                next();
+                return;
+            }
 
             if (!isManager || !isActive) {
                 return res.status(403).send({ message: 'forbidden access: user not active or not manager' });
@@ -75,7 +94,7 @@ async function run() {
             next();
         }
 
-        app.post('/products', verifyToken, verifyManager, async (req, res) => {
+        app.post('/products', verifyToken, verifyActiveManager, async (req, res) => {
             const item = req.body;
 
             if (item.addedAt) {
@@ -115,10 +134,29 @@ async function run() {
             });
         });
 
-        app.delete('/products/:id', verifyToken, verifyManager, async (req, res) => {
+        app.patch('/products/:id', verifyToken, async (req, res) => {
             const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await productCollection.deleteOne(query);
+            const item = req.body;
+            const filter = { _id: new ObjectId(id) };
+
+            const product = await productCollection.findOne(filter);
+            if (!product) {
+                return res.status(404).send({ message: "Product not found" });
+            }
+
+            const email = req.decodedEmail;
+            const user = await userCollection.findOne({ email });
+            
+            const isAdmin = user?.role === 'admin';
+            const isOwner = product.managerEmail === email;
+            const isActiveManager = user?.role === 'manager' && user?.status === 'active';
+
+            if (!isAdmin && !(isActiveManager && isOwner)) {
+                return res.status(403).send({ message: 'forbidden access: you can only update your own products' });
+            }
+
+            const updatedDoc = { $set: { ...item } };
+            const result = await productCollection.updateOne(filter, updatedDoc);
             res.send(result);
         });
 
@@ -146,10 +184,17 @@ async function run() {
             res.send(result);
         });
 
-        app.patch('/orders/status/:id', verifyToken, verifyManager, async (req, res) => {
+        app.patch('/orders/status/:id', verifyToken, verifyActiveManager, async (req, res) => {
             const id = req.params.id;
             const { status } = req.body;
             const filter = { _id: new ObjectId(id) };
+
+            // 1. Get the order details first (needed to find productId and quantity)
+            const order = await orderCollection.findOne(filter);
+
+            if (!order) {
+                return res.status(404).send({ message: "Order not found" });
+            }
 
             let updatedDoc = {
                 $set: {
@@ -159,6 +204,14 @@ async function run() {
 
             if (status === 'Approved') {
                 updatedDoc.$set.approvedAt = new Date();
+            }
+
+            if (status === 'Rejected' && order.status !== 'Rejected') {
+                const productFilter = { _id: new ObjectId(order.productId) };
+                const updateProductDoc = {
+                    $inc: { quantity: order.quantity }
+                };
+                await productCollection.updateOne(productFilter, updateProductDoc);
             }
 
             const result = await orderCollection.updateOne(filter, updatedDoc);
@@ -172,7 +225,7 @@ async function run() {
             res.send(result);
         });
 
-        app.patch('/orders/tracking/:id', verifyToken, verifyManager, async (req, res) => {
+        app.patch('/orders/tracking/:id', verifyToken, verifyActiveManager, async (req, res) => {
             const id = req.params.id;
             const { status, location, note, date } = req.body;
             const filter = { _id: new ObjectId(id) };
@@ -216,6 +269,14 @@ async function run() {
         });
 
         app.post('/orders', verifyToken, async (req, res) => {
+            const email = req.decodedEmail;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+
+            if (user?.status !== 'active') {
+                return res.status(403).send({ message: 'forbidden access: suspended users cannot place orders' });
+            }
+
             const order = req.body;
 
             if (order.orderDate) {
@@ -267,6 +328,16 @@ async function run() {
 
             if (!order) {
                 return res.status(404).send({ message: "Order not found" });
+            }
+
+            const email = req.decodedEmail;
+            const user = await userCollection.findOne({ email: email });
+
+            const isOwner = order.email === email;
+            const isAdmin = user?.role === 'admin';
+
+            if (!isOwner && !isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' });
             }
 
             const productFilter = { _id: new ObjectId(order.productId) };
