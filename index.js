@@ -74,6 +74,13 @@ async function run() {
 
         app.post('/products', verifyToken, verifyManager, async (req, res) => {
             const item = req.body;
+            
+            if (item.addedAt) {
+                item.addedAt = new Date(item.addedAt);
+            } else {
+                item.addedAt = new Date();
+            }
+
             const result = await productCollection.insertOne(item);
             res.send(result);
         });
@@ -191,12 +198,21 @@ async function run() {
             if (existingUser) {
                 return res.send({ message: 'user already exists', insertedId: null })
             }
-            const result = await userCollection.insertOne(user);
+            const result = await userCollection.insertOne({
+                ...user,
+                createdAt: new Date()
+            });
             res.send(result);
         });
 
         app.post('/orders', verifyToken, async (req, res) => {
             const order = req.body;
+            
+            if (order.orderDate) {
+                order.orderDate = new Date(order.orderDate);
+            } else {
+                order.orderDate = new Date();
+            }
 
             const result = await orderCollection.insertOne(order);
 
@@ -440,27 +456,75 @@ async function run() {
         });
 
         app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
-            const users = await userCollection.estimatedDocumentCount();
-            const products = await productCollection.estimatedDocumentCount();
-            const orders = await orderCollection.estimatedDocumentCount();
+            const { filter } = req.query;
+            
+            let dateLogic = {};
+            const now = new Date();
+            let startDate = null;
 
-            const payments = await orderCollection.aggregate([
-                {
-                    $group: {
-                        _id: null,
-                        totalRevenue: { $sum: '$totalPrice' }
+            if (filter === 'today') {
+                startDate = new Date(now.setHours(0, 0, 0, 0));
+            } else if (filter === 'week') {
+                startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            } else if (filter === 'month') {
+                startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            }
+
+            if (startDate) {
+                dateLogic = {
+                    $expr: {
+                        $gte: [
+                            { $toDate: "$createdAt" },
+                            startDate
+                        ]
                     }
-                }
-            ]).toArray();
+                };
+            }
 
-            const revenue = payments.length > 0 ? payments[0].totalRevenue : 0;
+            try {
+                
+                const userQuery = startDate ? { 
+                    $expr: { $gte: [{ $toDate: "$createdAt" }, startDate] } 
+                } : {};
 
-            res.send({
-                users,
-                products,
-                orders,
-                revenue
-            });
+                const productQuery = startDate ? { 
+                    $expr: { $gte: [{ $toDate: "$addedAt" }, startDate] } 
+                } : {};
+
+                const orderQuery = startDate ? { 
+                    $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] } 
+                } : {};
+
+                const users = await userCollection.countDocuments(userQuery);
+                const products = await productCollection.countDocuments(productQuery);
+                const orders = await orderCollection.countDocuments(orderQuery);
+
+                const matchStage = startDate 
+                    ? { $match: { $expr: { $gte: [{ $toDate: "$orderDate" }, startDate] } } } 
+                    : { $match: {} };
+
+                const payments = await orderCollection.aggregate([
+                    matchStage,
+                    {
+                        $group: {
+                            _id: null,
+                            totalRevenue: { $sum: '$totalPrice' }
+                        }
+                    }
+                ]).toArray();
+
+                const revenue = payments.length > 0 ? payments[0].totalRevenue : 0;
+
+                res.send({
+                    users,
+                    products,
+                    orders,
+                    revenue
+                });
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Error fetching admin stats" });
+            }
         });
 
         // await client.db("admin").command({ ping: 1 });
