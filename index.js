@@ -111,17 +111,43 @@ async function run() {
             const page = parseInt(req.query.page) || 0;
             const size = parseInt(req.query.size) || 10;
             const search = req.query.search || "";
+            const category = req.query.category;
+            const sort = req.query.sort;
+            const minPrice = req.query.minPrice;
+            const maxPrice = req.query.maxPrice;
             const showOnHome = req.query.showOnHome === 'true';
 
             let query = {};
+
             if (search) {
                 query.name = { $regex: search, $options: 'i' };
+            }
+            if (category && category !== 'All') {
+                query.category = category;
             }
             if (showOnHome) {
                 query.showOnHome = true;
             }
+            
+            if (minPrice || maxPrice) {
+                query.price = {};
+                if (minPrice) {
+                    query.price.$gte = parseFloat(minPrice);
+                }
+                if (maxPrice) {
+                    query.price.$lte = parseFloat(maxPrice);
+                }
+            }
+
+            let sortOptions = {};
+            if (sort === 'asc') {
+                sortOptions = { price: 1 };
+            } else if (sort === 'desc') {
+                sortOptions = { price: -1 };
+            }
 
             const result = await productCollection.find(query)
+                .sort(sortOptions)
                 .skip(page * size)
                 .limit(size)
                 .toArray();
@@ -146,7 +172,7 @@ async function run() {
 
             const email = req.decodedEmail;
             const user = await userCollection.findOne({ email });
-            
+
             const isAdmin = user?.role === 'admin';
             const isOwner = product.managerEmail === email;
             const isActiveManager = user?.role === 'manager' && user?.status === 'active';
@@ -189,7 +215,6 @@ async function run() {
             const { status } = req.body;
             const filter = { _id: new ObjectId(id) };
 
-            // 1. Get the order details first (needed to find productId and quantity)
             const order = await orderCollection.findOne(filter);
 
             if (!order) {
@@ -361,6 +386,12 @@ async function run() {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await productCollection.findOne(query);
+
+            if (result) {
+                if (!result.images || !Array.isArray(result.images)) {
+                    result.images = result.image ? [result.image, result.image, result.image] : [];
+                }
+            }
             res.send(result);
         });
 
@@ -540,7 +571,7 @@ async function run() {
             const id = req.params.id;
             const { role, status } = req.body;
             const filter = { _id: new ObjectId(id) };
-            
+
             const currentUser = await userCollection.findOne(filter);
 
             if (role === 'admin') {
@@ -548,8 +579,8 @@ async function run() {
                 const isActive = currentUser?.status === 'active';
 
                 if (!isManager || !isActive) {
-                    return res.status(400).send({ 
-                        message: 'Action Denied: Only active Managers can be promoted to Admin.' 
+                    return res.status(400).send({
+                        message: 'Action Denied: Only active Managers can be promoted to Admin.'
                     });
                 }
             }
